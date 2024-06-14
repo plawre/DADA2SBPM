@@ -1,4 +1,3 @@
-#
 # This is a Shiny web application. You can run the application by clicking
 # the 'Run App' button above.
 #
@@ -18,7 +17,6 @@ library(dplyr)
 library(ggplot2)
 library(tidyr)
 library(shinythemes)
-
 
 # Define UI for the application
 ui <- fluidPage(
@@ -76,12 +74,12 @@ server <- function(input, output, session) {
     # Update the options for filter name based on the selected filter level
     req(input$filter_level)
     filter_choices <- unique(data[[input$filter_level]])
-    updateSelectInput(session, "filter_name", choices = filter_choices)
+    updateSelectizeInput(session, "filter_name", choices = filter_choices, server = TRUE)
   })
   
   output$filter_name_ui <- renderUI({
     req(uploaded_data())
-    selectInput("filter_name", "Select Filter Name:", choices = NULL)
+    selectizeInput("filter_name", "Select Filter Name:", choices = NULL, options = list(maxOptions = 1000))
   })
   
   plot_data <- reactiveVal(NULL)
@@ -97,6 +95,9 @@ server <- function(input, output, session) {
     filtered_data <- data %>%
       filter(!!sym(filter_level) == filter_name)
     
+    # Handle sequences without taxonomic information
+    filtered_data[[plot_level]] <- ifelse(grepl("__NA$", filtered_data[[plot_level]]), "Other", filtered_data[[plot_level]])
+    
     # Check if the plot level columns are available in the filtered data
     if (!plot_level %in% colnames(filtered_data)) {
       stop(paste("The column", plot_level, "is not found in the filtered data."))
@@ -111,28 +112,38 @@ server <- function(input, output, session) {
     abundance_data <- filtered_data %>%
       select(all_of(plot_level), all_of(numeric_columns))
     
-    # Pivot the data for plotting
-    melted_data <- abundance_data %>%
+    # Sum the abundance data by the selected taxonomic level
+    summed_data <- abundance_data %>%
+      group_by(!!sym(plot_level)) %>%
+      summarise(across(everything(), sum, na.rm = TRUE)) %>%
       pivot_longer(cols = -!!sym(plot_level), names_to = "Sample", values_to = "Abundance")
     
-    # Summarize the abundance data and calculate relative abundances
-    summarized_data <- melted_data %>%
+    # Calculate relative abundances
+    summarized_data <- summed_data %>%
       group_by(Sample) %>%
       mutate(Total_Abundance_Sample = sum(Abundance, na.rm = TRUE)) %>%
       ungroup() %>%
       mutate(Relative_Abundance = Abundance / Total_Abundance_Sample * 100)
     
+    # Create the color palette for the plot
+    unique_levels <- unique(summarized_data[[plot_level]])
+    colors <- setNames(scales::hue_pal()(length(unique_levels)), unique_levels)
+    if ("Other" %in% unique_levels) {
+      colors["Other"] <- "gray"
+    }
+    
     # Create the plot
     plot <- ggplot(summarized_data, aes(x = Sample, y = Relative_Abundance, fill = !!sym(plot_level))) +
       geom_bar(stat = "identity") +
-      geom_text(aes(label = round(Abundance, 1)), position = position_stack(vjust = 0.5), size = 3) +
+      geom_text(aes(label = round(Relative_Abundance, 1)), position = position_stack(vjust = 0.5), size = 3) +
       labs(title = paste("Stacked Bar Plot of", plot_level, "within", filter_name, "(Relative Abundance)"),
            x = "Sample",
            y = "Relative Abundance (%)",
            fill = plot_level,
-           caption = "Numbers in boxes are ASV counts") +
+           caption = "Relative abundances in percentages") +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      scale_fill_manual(values = colors)
     
     plot_data(list(plot = plot, filename = paste0("stacked_bar_plot_", filter_name, "_", plot_level, "_with_counts.png")))
     
@@ -143,7 +154,7 @@ server <- function(input, output, session) {
     
     # Display the note
     output$note <- renderText({
-      "Note: Numbers in boxes are ASV counts."
+      "Note: Relative abundances are shown as percentages."
     })
   })
   
@@ -161,4 +172,3 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
