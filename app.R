@@ -21,7 +21,7 @@ library(shinythemes)
 # Define UI for the application
 ui <- fluidPage(
   theme = shinytheme("superhero"),
-  titlePanel("Parker's Stacked Bar Plot for Taxonomic Data Makerer"),
+  titlePanel("Parker's Stacked Bar Plot for Taxonomic Data Makerer V3.5"),
   sidebarLayout(
     sidebarPanel(
       h3("Upload and Configure Plot"),
@@ -62,19 +62,40 @@ server <- function(input, output, session) {
     uploaded_data(data)
     
     # Update filter level choices based on the uploaded data
-    updateSelectInput(session, "filter_level", choices = names(data)[sapply(data, is.character)])
+    filter_levels <- sort(names(data)[sapply(data, is.character)])
+    updateSelectInput(session, "filter_level", choices = filter_levels)
     # Update plot level choices based on the uploaded data
-    updateSelectInput(session, "plot_level", choices = names(data)[sapply(data, is.character)])
+    plot_levels <- sort(names(data)[sapply(data, is.character)])
+    updateSelectInput(session, "plot_level", choices = plot_levels)
   })
   
-  observe({
+  observeEvent(input$filter_level, {
     req(uploaded_data())
     data <- uploaded_data()
     
-    # Update the options for filter name based on the selected filter level
+    # Determine the higher taxonomic level
+    taxonomic_levels <- c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+    level_index <- match(input$filter_level, taxonomic_levels)
+    higher_level <- if (!is.na(level_index) && level_index > 1) taxonomic_levels[level_index - 1] else NULL
+    
+    # Update the options for filter name based on the selected filter level and higher level
     req(input$filter_level)
-    filter_choices <- unique(data[[input$filter_level]])
+    if (!is.null(higher_level) && higher_level %in% names(data)) {
+      data <- data %>%
+        mutate(FilterName = paste(data[[higher_level]], data[[input$filter_level]], sep = " "))
+    } else {
+      data <- data %>%
+        mutate(FilterName = data[[input$filter_level]])
+    }
+    
+    # Filter out 'x__NA' values from the filter choices
+    filter_choices <- unique(data$FilterName)
+    filter_choices <- filter_choices[!grepl("__NA", filter_choices)]
+    filter_choices <- sort(filter_choices)
     updateSelectizeInput(session, "filter_name", choices = filter_choices, server = TRUE)
+    
+    # Reset the filter name selection
+    updateSelectizeInput(session, "filter_name", selected = character(0))
   })
   
   output$filter_name_ui <- renderUI({
@@ -92,11 +113,23 @@ server <- function(input, output, session) {
     plot_level <- input$plot_level
     
     # Filter the data based on the chosen taxonomic level and name
-    filtered_data <- data %>%
-      filter(!!sym(filter_level) == filter_name)
+    taxonomic_levels <- c("Domain", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+    level_index <- match(filter_level, taxonomic_levels)
+    higher_level <- if (!is.na(level_index) && level_index > 1) taxonomic_levels[level_index - 1] else NULL
+    
+    if (!is.null(higher_level) && higher_level %in% names(data)) {
+      filtered_data <- data %>%
+        filter(paste(data[[higher_level]], data[[filter_level]], sep = " ") == filter_name)
+    } else {
+      filtered_data <- data %>%
+        filter(data[[filter_level]] == filter_name)
+    }
     
     # Handle sequences without taxonomic information
     filtered_data[[plot_level]] <- ifelse(grepl("__NA$", filtered_data[[plot_level]]), "Other", filtered_data[[plot_level]])
+    
+    # Remove the prefix 'x__' from the taxonomic levels
+    filtered_data[[plot_level]] <- gsub("^.__(.*)$", "\\1", filtered_data[[plot_level]])
     
     # Check if the plot level columns are available in the filtered data
     if (!plot_level %in% colnames(filtered_data)) {
@@ -135,12 +168,12 @@ server <- function(input, output, session) {
     # Create the plot
     plot <- ggplot(summarized_data, aes(x = Sample, y = Relative_Abundance, fill = !!sym(plot_level))) +
       geom_bar(stat = "identity") +
-      geom_text(aes(label = round(Relative_Abundance, 1)), position = position_stack(vjust = 0.5), size = 3) +
+      geom_text(aes(label = Abundance), position = position_stack(vjust = 0.5), size = 3) +
       labs(title = paste("Stacked Bar Plot of", plot_level, "within", filter_name, "(Relative Abundance)"),
            x = "Sample",
            y = "Relative Abundance (%)",
            fill = plot_level,
-           caption = "Relative abundances in percentages") +
+           caption = "Relative abundances in percentages\nNumbers in boxes are absolute reads") +
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
       scale_fill_manual(values = colors)
@@ -154,7 +187,7 @@ server <- function(input, output, session) {
     
     # Display the note
     output$note <- renderText({
-      "Note: Relative abundances are shown as percentages."
+      "Note: Relative abundances are shown as percentages. Numbers in boxes are absolute reads."
     })
   })
   
