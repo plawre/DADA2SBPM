@@ -112,12 +112,14 @@ server <- function(input, output, session) {
     abundance_data <- filtered_data %>%
       select(all_of(plot_level), all_of(numeric_columns))
     
-    # Pivot the data for plotting
-    melted_data <- abundance_data %>%
+    # Sum the abundance data by the selected taxonomic level
+    summed_data <- abundance_data %>%
+      group_by(!!sym(plot_level)) %>%
+      summarise(across(everything(), sum, na.rm = TRUE)) %>%
       pivot_longer(cols = -!!sym(plot_level), names_to = "Sample", values_to = "Abundance")
     
-    # Summarize the abundance data and calculate relative abundances
-    summarized_data <- melted_data %>%
+    # Calculate relative abundances
+    summarized_data <- summed_data %>%
       group_by(Sample) %>%
       mutate(Total_Abundance_Sample = sum(Abundance, na.rm = TRUE)) %>%
       ungroup() %>%
@@ -133,12 +135,12 @@ server <- function(input, output, session) {
     # Create the plot
     plot <- ggplot(summarized_data, aes(x = Sample, y = Relative_Abundance, fill = !!sym(plot_level))) +
       geom_bar(stat = "identity") +
-      geom_text(aes(label = round(Abundance, 1)), position = position_stack(vjust = 0.5), size = 3) +
+      geom_text(aes(label = round(Relative_Abundance, 1)), position = position_stack(vjust = 0.5), size = 3) +
       labs(title = paste("Stacked Bar Plot of", plot_level, "within", filter_name, "(Relative Abundance)"),
            x = "Sample",
            y = "Relative Abundance (%)",
            fill = plot_level,
-           caption = "Numbers in boxes are ASV counts") +
+           caption = "Relative abundances in percentages") +
       theme_minimal() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
       scale_fill_manual(values = colors)
@@ -152,7 +154,7 @@ server <- function(input, output, session) {
     
     # Display the note
     output$note <- renderText({
-      "Note: Numbers in boxes are ASV counts."
+      "Note: Relative abundances are shown as percentages."
     })
   })
   
