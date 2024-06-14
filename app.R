@@ -1,4 +1,3 @@
-#
 # This is a Shiny web application. You can run the application by clicking
 # the 'Run App' button above.
 #
@@ -18,7 +17,6 @@ library(dplyr)
 library(ggplot2)
 library(tidyr)
 library(shinythemes)
-
 
 # Define UI for the application
 ui <- fluidPage(
@@ -76,12 +74,12 @@ server <- function(input, output, session) {
     # Update the options for filter name based on the selected filter level
     req(input$filter_level)
     filter_choices <- unique(data[[input$filter_level]])
-    updateSelectInput(session, "filter_name", choices = filter_choices)
+    updateSelectizeInput(session, "filter_name", choices = filter_choices, server = TRUE)
   })
   
   output$filter_name_ui <- renderUI({
     req(uploaded_data())
-    selectInput("filter_name", "Select Filter Name:", choices = NULL)
+    selectizeInput("filter_name", "Select Filter Name:", choices = NULL, options = list(maxOptions = 1000))
   })
   
   plot_data <- reactiveVal(NULL)
@@ -96,6 +94,9 @@ server <- function(input, output, session) {
     # Filter the data based on the chosen taxonomic level and name
     filtered_data <- data %>%
       filter(!!sym(filter_level) == filter_name)
+    
+    # Handle sequences without taxonomic information
+    filtered_data[[plot_level]] <- ifelse(grepl("__NA$", filtered_data[[plot_level]]), "Other", filtered_data[[plot_level]])
     
     # Check if the plot level columns are available in the filtered data
     if (!plot_level %in% colnames(filtered_data)) {
@@ -122,6 +123,13 @@ server <- function(input, output, session) {
       ungroup() %>%
       mutate(Relative_Abundance = Abundance / Total_Abundance_Sample * 100)
     
+    # Create the color palette for the plot
+    unique_levels <- unique(summarized_data[[plot_level]])
+    colors <- setNames(scales::hue_pal()(length(unique_levels)), unique_levels)
+    if ("Other" %in% unique_levels) {
+      colors["Other"] <- "gray"
+    }
+    
     # Create the plot
     plot <- ggplot(summarized_data, aes(x = Sample, y = Relative_Abundance, fill = !!sym(plot_level))) +
       geom_bar(stat = "identity") +
@@ -132,7 +140,8 @@ server <- function(input, output, session) {
            fill = plot_level,
            caption = "Numbers in boxes are ASV counts") +
       theme_minimal() +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      scale_fill_manual(values = colors)
     
     plot_data(list(plot = plot, filename = paste0("stacked_bar_plot_", filter_name, "_", plot_level, "_with_counts.png")))
     
@@ -161,4 +170,3 @@ server <- function(input, output, session) {
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
